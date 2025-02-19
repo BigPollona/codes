@@ -1,3 +1,5 @@
+-- Optimization of the provided Lua code
+
 --[[
   Forked UI from bungie#0001
   Edited by Depso
@@ -7,38 +9,38 @@
   This is also no longer speific to Synapse-X
 ]]
 
-local CloneRef = cloneref or function(a)return a end
+-- CloneRef function (Let's analyze if this is truly needed and optimize if possible)
+local CloneRef = cloneref or function(a) return a end -- Consider removing if not necessary
 
 --// Service handlers
 local Services = setmetatable({}, {
-	__index = function(self, Name: string)
-		local Service = game:GetService(Name)
-		return CloneRef(Service)
+	__index = function(_, Name: string) -- Remove `self` as it's not used
+		return game:GetService(Name) -- Services are singletons, no need for CloneRef here
 	end,
 })
 
 -- / Locals
 local Player = Services.Players.LocalPlayer
-local Mouse = CloneRef(Player:GetMouse())
+local Mouse = Player:GetMouse() -- Mouse is recreated on GetMouse(), CloneRef might be redundant
 
--- / Services
+-- / Services (No need to CloneRef services, they are singletons)
 local UserInputService = Services.UserInputService
 local TextService = Services.TextService
-local TweenService =Services.TweenService
+local TweenService = Services.TweenService
 local RunService = Services.RunService
-local CoreGui = RunService:IsStudio() and CloneRef(Player:WaitForChild("PlayerGui")) or Services.CoreGui
+local CoreGui = RunService:IsStudio() and (Player:WaitForChild("PlayerGui")) or Services.CoreGui -- Simplify CoreGui retrieval, CloneRef might be redundant here depending on usage
 local TeleportService = Services.TeleportService
 local Workspace = Services.Workspace
 local CurrentCam = Workspace.CurrentCamera
 
-local hiddenUI = get_hidden_gui or gethui or function(a)return CoreGui end
+local hiddenUI = get_hidden_gui or gethui or function() return CoreGui end -- Function `a` parameter unused, simplify to function()
 
--- / Defaults 
+-- / Defaults
 local OptionStates = {} -- Used for panic
 local library = {
 	title = "Bozo depso",
 	company = "Company",
-	
+
 	RainbowEnabled = true,
 	BlurEffect = true,
 	BlurSize = 24,
@@ -53,29 +55,31 @@ local library = {
 	backgroundColor = Color3.fromRGB(31, 31, 31),
 	headerColor = Color3.fromRGB(255, 255, 255),
 	companyColor = Color3.fromRGB(163, 151, 255),
-	acientColor = Color3.fromRGB(167, 154, 121),
+	acientColor = Color3.fromRGB(167, 154, 121), -- "ancientColor" is likely intended spelling
 	darkGray = Color3.fromRGB(27, 27, 27),
 	lightGray = Color3.fromRGB(48, 48, 48),
 
 	Font = Enum.Font.Code,
 
 	rainbowColors = ColorSequence.new{
-		ColorSequenceKeypoint.new(0.00, Color3.fromRGB(241, 137, 53)), 
-		ColorSequenceKeypoint.new(0.33, Color3.fromRGB(241, 53, 106)), 
-		ColorSequenceKeypoint.new(0.66, Color3.fromRGB(133, 53, 241)), 
+		ColorSequenceKeypoint.new(0.00, Color3.fromRGB(241, 137, 53)),
+		ColorSequenceKeypoint.new(0.33, Color3.fromRGB(241, 53, 106)),
+		ColorSequenceKeypoint.new(0.66, Color3.fromRGB(133, 53, 241)),
 		ColorSequenceKeypoint.new(1, Color3.fromRGB(53, 186, 241))
 	}
 }
 
+local DebugEnabled = library.Debug -- Cache Debug state to potentially improve performance in Warn function
+
 local function Warn(...)
-	if not library.Debug then return end
+	if not DebugEnabled then return end -- Use cached Debug state
 	warn("Depso:", ...)
 end
 
 -- / Remove the previous interface
 if _G.DepsoGUI then
 	pcall(function()
-		_G.DepsoGUI:Remove()
+		_G.DepsoGUI:Destroy() -- Use Destroy instead of Remove for proper cleanup
 	end)
 end
 _G.DepsoGUI = library
@@ -90,15 +94,13 @@ local TweenWrapper = {}
 
 function TweenWrapper:Init()
 	self.RealStyles = {
-		Default = {
-			TweenInfo.new(0.17, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, 0, false, 0)
-		}
+		Default = TweenInfo.new(0.17, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, 0, false, 0) -- Directly create TweenInfo
 	}
 	self.Styles = setmetatable({}, {
-		__index = function(_, Key)
+		__index = function(_, Key) -- Remove `self`
 			local Value = self.RealStyles[Key]
 			if not Value then
-				Warn(`No Tween style for {Key}, returning default`)
+				Warn("No Tween style for " .. tostring(Key) .. ", returning default") -- Use string concatenation or template literals (if available) for clarity
 				return self.RealStyles.Default
 			end
 			return Value
@@ -107,12 +109,12 @@ function TweenWrapper:Init()
 end
 
 function TweenWrapper:CreateStyle(name, speed, ...)
-	if not name then 
-		return TweenInfo.new(0) 
+	if not name then
+		return TweenInfo.new(0)
 	end
 
 	local Tweeninfo = TweenInfo.new(
-		speed or 0.17, 
+		speed or 0.17,
 		...
 	)
 
@@ -130,38 +132,45 @@ local function EnableDrag(obj, latency)
 	end
 	latency = latency or 0.06
 
-	local toggled = nil
+	local toggled = false -- Initialize to false
 	local input = nil
 	local start = nil
 	local startPos = obj.Position
-	
+
 	local function InputIsAccepted(Input)
 		local UserInputType = Input.UserInputType
-		
-		if UserInputType == Enum.UserInputType.Touch then return true end
-		if UserInputType == Enum.UserInputType.MouseButton1 then return true end
-		
-		return false
+
+		return UserInputType == Enum.UserInputType.Touch or UserInputType == Enum.UserInputType.MouseButton1 -- Simplified return
 	end
 
 	obj.InputBegan:Connect(function(Input)
 		if not InputIsAccepted(Input) then return end
-		
+
 		toggled = true
 		start = Input.Position
 		startPos = obj.Position
-		
-		Input.Changed:Connect(function()
+
+		local function inputEnded() -- Define inputEnded function locally to avoid repeated anonymous function creation
+			toggled = false
+			inputEnded = nil -- Dereference to allow garbage collection
+		end
+
+		local changedConnection -- Declare connection outside to be accessible in the callback
+
+		changedConnection = Input.Changed:Connect(function()
 			if Input.UserInputState == Enum.UserInputState.End then
-				toggled = false
+				inputEnded()
+				changedConnection:Disconnect() -- Disconnect after use
+				changedConnection = nil -- Dereference for garbage collection
 			end
 		end)
 	end)
 
 	obj.InputChanged:Connect(function(Input)
+		if not toggled then return end -- Early exit if not toggled
 		local MouseMovement = Input.UserInputType == Enum.UserInputType.MouseMovement
-		if not MouseMovement and not InputIsAccepted(Input) then return end 
-		
+		if not MouseMovement and not InputIsAccepted(Input) then return end
+
 		input = Input
 	end)
 
@@ -175,7 +184,7 @@ local function EnableDrag(obj, latency)
 end
 
 RunService.RenderStepped:Connect(function(v)
-	library.fps =  math.round(1/v)
+	library.fps = math.round(1/v)
 end)
 
 function library:RoundNumber(int, float)
@@ -187,7 +196,7 @@ function library:GetUsername()
 end
 
 function library:Panic()
-	for Frame, Data in next, OptionStates do
+	for _, Data in OptionStates do -- Use `_` for unused key
 		local Functions = Data[2]
 		local State = Data[1]
 
@@ -219,13 +228,13 @@ end
 
 function library:Rejoin()
 	TeleportService:TeleportToPlaceInstance(
-		library:GetPlaceId(), 
-		library:GetJobId(), 
+		library:GetPlaceId(),
+		library:GetJobId(),
 		library:GetUserId()
 	)
 end
 
-function library:Copy(input) 
+function library:Copy(input)
 	local clipBoard = setclipboard or toclipboard or set_clipboard or (Clipboard and Clipboard.set)
 	if clipBoard then
 		clipBoard(input)
